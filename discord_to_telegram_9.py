@@ -21,13 +21,15 @@ def extract_user_id(text):
 def extract_username_from_channel(channel_name):
     name = channel_name.lower()
     name = re.sub(r'^ticket[-_]', '', name)
+    name = re.sub(r'^support[-_]', '', name)
     name = re.sub(r'[-_]\d+$', '', name)
     name = re.sub(r'^\d+[-_]', '', name)
     if re.match(r'^\d+$', name) or name == '':
         return None
     return name
 
-async def fetch_username_http(user_id):
+async def fetch_user_http(user_id):
+    """Fetch user info from Discord API. Returns (id, username, is_bot)."""
     try:
         async with httpx.AsyncClient() as c:
             r = await c.get(
@@ -38,50 +40,54 @@ async def fetch_username_http(user_id):
             if r.status_code == 200:
                 data = r.json()
                 username = data.get("global_name") or data.get("username")
-                print(f"  [http-fetch] {user_id} → {username}")
-                return username
-            else:
-                print(f"  [http-fetch error] {r.status_code}: {r.text}")
+                is_bot = data.get("bot", False)
+                print(f"  [http-fetch] {user_id} → {username} (bot={is_bot})")
+                return str(user_id), username, is_bot
     except Exception as e:
         print(f"  [http-fetch exception] {e}")
-    return None
+    return str(user_id), None, None
 
-async def fetch_audit_log(guild, channel_id):
+async def get_creator_from_overwrites(channel):
+    """
+    Check overwrites for the ticket creator.
+    Handles both discord.Member and discord.Object (unresolved members).
+    """
+    member_ids = []
     try:
-        await asyncio.sleep(2)
-        async for entry in guild.audit_logs(limit=10, action=discord.AuditLogAction.channel_create):
-            if entry.target and entry.target.id == channel_id:
-                user = entry.user
-                if user and not user.bot and user.id != client.user.id:
-                    print(f"  [audit-log] found creator: {user.name} ({user.id})")
-                    return str(user.id), user.name
-    except Exception as e:
-        print(f"  [audit-log error] {e}")
-    return None, None
-
-def get_creator_from_overwrites(channel):
-    try:
-        print(f"  [overwrites] checking {len(channel.overwrites)} overwrites")
         for target, overwrite in channel.overwrites.items():
-            ttype = type(target).__name__
-            tid = getattr(target, 'id', '?')
-            tname = getattr(target, 'name', '?')
-            tbot = getattr(target, 'bot', None)
-            print(f"    → {ttype}: {tname} (id={tid}, bot={tbot})")
-            if isinstance(target, discord.Member) and not target.bot and target.id != client.user.id:
-                return str(target.id), target.name
+            tid = getattr(target, 'id', None)
+            if not tid: continue
+
+            # Skip @everyone and known role IDs (roles have no 'bot' attribute as False)
+            if isinstance(target, discord.Member):
+                if not target.bot and target.id != client.user.id:
+                    print(f"  [overwrite-member] {target.name} ({target.id})")
+                    return str(target.id), target.name
+            elif isinstance(target, discord.Role):
+                continue  # skip roles
+            else:
+                # discord.Object — unknown type, collect ID for HTTP lookup
+                if tid != client.user.id:
+                    member_ids.append(tid)
+
     except Exception as e:
         print(f"  [overwrites error] {e}")
+
+    # Try fetching each Object ID to find the user
+    for uid in member_ids:
+        uid_str, username, is_bot = await fetch_user_http(uid)
+        if not is_bot and username:
+            return uid_str, username
+
     return None, None
 
 def get_user_id_from_topic(channel):
     try:
         topic = getattr(channel, 'topic', None) or ''
         if topic:
-            print(f"  [topic] {topic}")
+            print(f"  [topic] {topic[:100]}")
             found = extract_user_id(topic)
-            if found:
-                return found
+            if found: return found
     except Exception as e:
         print(f"  [topic error] {e}")
     return None
@@ -90,8 +96,7 @@ async def resolve_from_history(channel):
     try:
         await asyncio.sleep(6)
         async for message in channel.history(limit=15, oldest_first=True):
-            if message.author.id == client.user.id:
-                continue
+            if message.author.id == client.user.id: continue
             if not message.author.bot:
                 return str(message.author.id), message.author.name
             found = extract_user_id(message.content)
@@ -131,25 +136,27 @@ async def process_ticket(guild, channel, channel_name, channel_id):
     try:
         user_id, username = None, None
 
-        user_id, username = get_creator_from_overwrites(channel)
+        # Method 1: permission overwrites (handles Member + Object types)
+        user_id, username = await get_creator_from_overwrites(channel)
 
+        # Method 2: channel topic
         if not user_id:
             user_id = get_user_id_from_topic(channel)
 
-        if not user_id:
-            user_id, username = await fetch_audit_log(guild, channel_id)
-
+        # Method 3: channel history
         if not user_id:
             h_id, h_name = await resolve_from_history(channel)
             if h_id:
                 user_id = h_id
                 username = h_name
 
+        # Method 4: extract from channel name
         if not username:
             username = extract_username_from_channel(channel_name)
 
+        # Method 5: fetch username via HTTP if we have ID but no username
         if user_id and not username:
-            username = await fetch_username_http(user_id)
+            _, username, _ = await fetch_user_http(user_id)
 
         print(f"  → Final: {channel_name} | {username or 'Unknown'} ({user_id or '?'})")
         await send_to_telegram(build_message(guild.name, channel_name, channel_id, user_id, username))
