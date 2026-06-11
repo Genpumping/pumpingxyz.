@@ -139,10 +139,7 @@ async def process_ticket(guild, channel, channel_name, channel_id):
         print(f"  [CRASH] {e}")
         await send_to_telegram(build_message(guild.name, channel_name, channel_id))
 
-intents = discord.Intents.default()
-intents.members = True
-intents.message_content = True
-client = discord.Client(intents=intents)
+client = discord.Client()
 
 @client.event
 async def on_ready():
