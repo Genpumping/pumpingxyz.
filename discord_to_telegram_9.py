@@ -19,27 +19,15 @@ def extract_user_id(text):
     return m.group(1) if m else None
 
 def extract_username_from_channel(channel_name):
-    """
-    Handles all formats:
-      ticket-j0h_1-3611  → j0h_1
-      ticket-2324-murongg → murongg
-      ticket-reza_abbas   → reza_abbas
-      ticket-16780        → None
-    """
     name = channel_name.lower()
-    # Remove leading ticket- or ticket_
     name = re.sub(r'^ticket[-_]', '', name)
-    # Remove trailing -number or _number (ticket number at end)
     name = re.sub(r'[-_]\d+$', '', name)
-    # Remove leading number- or number_ (ticket number at start)
     name = re.sub(r'^\d+[-_]', '', name)
-    # If purely digits or empty, no username
     if re.match(r'^\d+$', name) or name == '':
         return None
     return name
 
 async def fetch_username_http(user_id):
-    """Fetch username directly via Discord HTTP API."""
     try:
         async with httpx.AsyncClient() as c:
             r = await c.get(
@@ -58,11 +46,50 @@ async def fetch_username_http(user_id):
         print(f"  [http-fetch exception] {e}")
     return None
 
+async def fetch_audit_log(guild, channel_id):
+    try:
+        await asyncio.sleep(2)
+        async for entry in guild.audit_logs(limit=10, action=discord.AuditLogAction.channel_create):
+            if entry.target and entry.target.id == channel_id:
+                user = entry.user
+                if user and not user.bot and user.id != client.user.id:
+                    print(f"  [audit-log] found creator: {user.name} ({user.id})")
+                    return str(user.id), user.name
+    except Exception as e:
+        print(f"  [audit-log error] {e}")
+    return None, None
+
+def get_creator_from_overwrites(channel):
+    try:
+        print(f"  [overwrites] checking {len(channel.overwrites)} overwrites")
+        for target, overwrite in channel.overwrites.items():
+            ttype = type(target).__name__
+            tid = getattr(target, 'id', '?')
+            tname = getattr(target, 'name', '?')
+            tbot = getattr(target, 'bot', None)
+            print(f"    → {ttype}: {tname} (id={tid}, bot={tbot})")
+            if isinstance(target, discord.Member) and not target.bot and target.id != client.user.id:
+                return str(target.id), target.name
+    except Exception as e:
+        print(f"  [overwrites error] {e}")
+    return None, None
+
+def get_user_id_from_topic(channel):
+    try:
+        topic = getattr(channel, 'topic', None) or ''
+        if topic:
+            print(f"  [topic] {topic}")
+            found = extract_user_id(topic)
+            if found:
+                return found
+    except Exception as e:
+        print(f"  [topic error] {e}")
+    return None
+
 async def resolve_from_history(channel):
     try:
         await asyncio.sleep(6)
         async for message in channel.history(limit=15, oldest_first=True):
-            # Skip selfbot's own messages
             if message.author.id == client.user.id:
                 continue
             if not message.author.bot:
@@ -104,31 +131,23 @@ async def process_ticket(guild, channel, channel_name, channel_id):
     try:
         user_id, username = None, None
 
-        # Method 1: permission overwrites (exclude self)
-        try:
-            for target, overwrite in channel.overwrites.items():
-                if isinstance(target, discord.Member) and not target.bot and target.id != client.user.id:
-                    user_id = str(target.id)
-                    username = target.name if target.name else None
-                    break
-            print(f"  [method1-overwrites] id={user_id} name={username}")
-        except Exception as e:
-            print(f"  [overwrites error] {e}")
+        user_id, username = get_creator_from_overwrites(channel)
 
-        # Method 2: scan channel history
+        if not user_id:
+            user_id = get_user_id_from_topic(channel)
+
+        if not user_id:
+            user_id, username = await fetch_audit_log(guild, channel_id)
+
         if not user_id:
             h_id, h_name = await resolve_from_history(channel)
-            print(f"  [method2-history] id={h_id} name={h_name}")
             if h_id:
                 user_id = h_id
                 username = h_name
 
-        # Method 3: extract from channel name
         if not username:
             username = extract_username_from_channel(channel_name)
-            print(f"  [method3-channelname] name={username}")
 
-        # Method 4: fetch username via HTTP API
         if user_id and not username:
             username = await fetch_username_http(user_id)
 
