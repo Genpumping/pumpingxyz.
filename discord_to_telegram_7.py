@@ -26,13 +26,24 @@ def extract_username_from_channel(channel_name):
         return None
     return name
 
-async def fetch_user_from_api(user_id):
+async def fetch_username_http(user_id):
     try:
-        user = await client.fetch_user(int(user_id))
-        if user: return str(user.id), user.name
+        async with httpx.AsyncClient() as c:
+            r = await c.get(
+                f"https://discord.com/api/v10/users/{user_id}",
+                headers={"Authorization": DISCORD_USER_TOKEN},
+                timeout=10
+            )
+            if r.status_code == 200:
+                data = r.json()
+                username = data.get("global_name") or data.get("username")
+                print(f"  [http-fetch] {user_id} → {username}")
+                return username
+            else:
+                print(f"  [http-fetch error] {r.status_code}: {r.text}")
     except Exception as e:
-        print(f"  [fetch_user error] {e}")
-    return user_id, None
+        print(f"  [http-fetch exception] {e}")
+    return None
 
 async def resolve_from_history(channel):
     try:
@@ -77,39 +88,32 @@ async def process_ticket(guild, channel, channel_name, channel_id):
     try:
         user_id, username = None, None
 
-        # Method 1: permission overwrites
         try:
             for target, overwrite in channel.overwrites.items():
                 if isinstance(target, discord.Member) and not target.bot:
-                    user_id, username = str(target.id), target.name
+                    user_id = str(target.id)
+                    username = target.name if target.name else None
                     break
-            print(f"  [method1-overwrites] id={user_id} name={username}")
         except Exception as e:
-            print(f"  [method1-overwrites error] {e}")
+            print(f"  [overwrites error] {e}")
 
-        # Method 2: scan channel history
         if not user_id:
             h_id, h_name = await resolve_from_history(channel)
-            print(f"  [method2-history] id={h_id} name={h_name}")
-            if h_id: user_id, username = h_id, h_name
+            if h_id:
+                user_id = h_id
+                username = h_name
 
-        # Method 3: extract username from channel name
         if not username:
             username = extract_username_from_channel(channel_name)
-            print(f"  [method3-channelname] name={username}")
 
-        # Method 4: fetch from Discord API
-        if user_id:
-            user_id, api_name = await fetch_user_from_api(user_id)
-            if not username: username = api_name
-            print(f"  [method4-api] id={user_id} name={username}")
+        if user_id and not username:
+            username = await fetch_username_http(user_id)
 
         print(f"  → Final: {channel_name} | {username or 'Unknown'} ({user_id or '?'})")
         await send_to_telegram(build_message(guild.name, channel_name, channel_id, user_id, username))
 
     except Exception as e:
         print(f"  [process_ticket CRASH] {e}")
-        # Still send with whatever we have
         await send_to_telegram(build_message(guild.name, channel_name, channel_id))
 
 intents = discord.Intents.default()
