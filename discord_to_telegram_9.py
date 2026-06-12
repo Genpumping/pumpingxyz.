@@ -22,7 +22,7 @@ def extract_username_from_channel(channel_name):
     name = channel_name.lower()
     name = re.sub(r'^ticket[-_]', '', name)
     name = re.sub(r'^support[-_]', '', name)
-    name = re.sub(r'[-_]\d+$', '', name)
+    name = re.sub(r'-\d+$', '', name)
     name = re.sub(r'^\d+[-_]', '', name)
     if re.match(r'^\d+$', name) or name == '':
         return None
