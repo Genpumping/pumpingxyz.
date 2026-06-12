@@ -10,6 +10,8 @@ TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 TICKET_BOT_NAMES = ["ticket tool","ticketbot","ticket bot","modmail","helper.gg","support bot","ticket manager","tickets","tickets v2","tickets.bot","helper","carl-bot","dyno","mee6","fluent","solayer","lightchain","canton","metacrm","mint official","master of rules"]
 TICKET_NAME_PATTERNS = [r'^ticket[-_]',r'^ticket\d+',r'[-_]ticket[-_\d]',r'^modmail[-_]',r'^support[-_]',r'^case[-_]',r'^help[-_]',r'^request[-_]',r'^\d+-\w+',r'^[a-zA-Z][^-]*-[^-]+-\d{3,}$']
 
+pending_channels = {}
+
 def is_ticket_channel(name):
     return any(re.search(p, name.lower()) for p in TICKET_NAME_PATTERNS)
 
@@ -29,6 +31,23 @@ def extract_username_from_channel(channel_name):
         return None
     return name
 
+def extract_ticket_name_from_message(message):
+    full_text = message.content or ""
+    if message.embeds:
+        for e in message.embeds:
+            full_text += " " + " ".join(filter(None, [e.description or "", e.title or "", " ".join(f.value for f in e.fields)]))
+    m = re.search(r'#\s*([a-zA-Z0-9][a-zA-Z0-9_-]{2,})', full_text)
+    if m:
+        name = m.group(1).strip().lower()
+        if is_ticket_channel(name):
+            return name
+    m = re.search(r'(?:opened|open).*?ticket[:\s]+([a-zA-Z0-9][a-zA-Z0-9_-]{2,})', full_text, re.IGNORECASE)
+    if m:
+        name = m.group(1).strip().lower()
+        if is_ticket_channel(name):
+            return name
+    return None
+
 async def fetch_user_http(user_id):
     try:
         async with httpx.AsyncClient() as c:
@@ -46,10 +65,6 @@ async def fetch_user_http(user_id):
                 print(f"[fetch error] {r.status_code} for {user_id}: {r.text}")
     except Exception as e:
         print(f"[fetch error] {e}")
-    return str(user_id), None, None
-    
-    except Exception:
-        pass
     return str(user_id), None, None
 
 async def get_creator_from_overwrites(channel):
@@ -97,9 +112,9 @@ async def resolve_from_history(channel):
                 text = " ".join(filter(None, [e.description or "", e.title or "", " ".join(f.value for f in e.fields)]))
                 found = extract_user_id(text)
                 if found: return found, None
-    except Exception as e:
-        print(f"[fetch error] {e}")
-    return str(user_id), None, None
+    except Exception:
+        pass
+    return None, None
 
 async def send_to_telegram(text):
     try:
@@ -127,8 +142,14 @@ def build_message(guild_name, channel_name, channel_id, user_id=None, username=N
 
 async def process_ticket(guild, channel, channel_name, channel_id):
     try:
-        user_id, username = None, None
+        pending_channels[channel_id] = {
+            "guild_name": guild.name,
+            "channel_name": channel_name,
+            "channel_id": channel_id,
+            "sent": False
+        }
 
+        user_id, username = None, None
         user_id, username = await get_creator_from_overwrites(channel)
 
         if not user_id:
@@ -146,12 +167,24 @@ async def process_ticket(guild, channel, channel_name, channel_id):
         if user_id and not username:
             _, username, _ = await fetch_user_http(user_id)
 
-        status = f"{username or 'Unknown'} ({user_id or '?'})"
-        print(f"[ticket] {guild.name} → #{channel_name} | {status}")
-        await send_to_telegram(build_message(guild.name, channel_name, channel_id, user_id, username))
+        if user_id:
+            if channel_id in pending_channels:
+                pending_channels[channel_id]["sent"] = True
+                pending_channels.pop(channel_id)
+            print(f"[ticket] {guild.name} → #{channel_name} | {username or 'Unknown'} ({user_id})")
+            await send_to_telegram(build_message(guild.name, channel_name, channel_id, user_id, username))
+        else:
+            await asyncio.sleep(20)
+            if channel_id in pending_channels and not pending_channels[channel_id]["sent"]:
+                pending_channels[channel_id]["sent"] = True
+                pending_channels.pop(channel_id)
+                print(f"[ticket-fallback] {guild.name} → #{channel_name} | Unknown")
+                await send_to_telegram(build_message(guild.name, channel_name, channel_id))
 
     except Exception as e:
         print(f"[ticket error] {guild.name} → #{channel_name} | {e}")
+        if channel_id in pending_channels:
+            pending_channels.pop(channel_id)
         await send_to_telegram(build_message(guild.name, channel_name, channel_id))
 
 client = discord.Client()
@@ -173,18 +206,44 @@ async def on_thread_create(thread):
 @client.event
 async def on_message(message):
     if not message.guild: return
-    if not is_ticket_channel(getattr(message.channel, 'name', '')): return
     if not message.author.bot: return
     if not any(b in message.author.name.lower() for b in TICKET_BOT_NAMES): return
-    user_id = extract_user_id(message.content)
-    if not user_id and message.embeds:
-        for e in message.embeds:
-            text = " ".join(filter(None, [e.description or "", e.title or "", " ".join(f.value for f in e.fields)]))
-            user_id = extract_user_id(text)
-            if user_id: break
-    if not user_id: return
-    _, username, _ = await fetch_user_http(user_id)
-    print(f"[ticket-msg] {message.guild.name} → #{message.channel.name} | {username} ({user_id})")
-    await send_to_telegram(build_message(message.guild.name, message.channel.name, message.channel.id, user_id, username))
+
+    channel_id = message.channel.id
+
+    # Case 1: Message inside a ticket channel we're tracking
+    if channel_id in pending_channels and not pending_channels[channel_id]["sent"]:
+        user_id = extract_user_id(message.content)
+        if not user_id and message.embeds:
+            for e in message.embeds:
+                text = " ".join(filter(None, [e.description or "", e.title or "", " ".join(f.value for f in e.fields)]))
+                user_id = extract_user_id(text)
+                if user_id: break
+        if user_id:
+            ticket = pending_channels[channel_id]
+            ticket["sent"] = True
+            pending_channels.pop(channel_id)
+            _, username, _ = await fetch_user_http(user_id)
+            if not username:
+                username = extract_username_from_channel(ticket["channel_name"])
+            print(f"[ticket-msg] {message.guild.name} → #{ticket['channel_name']} | {username} ({user_id})")
+            await send_to_telegram(build_message(ticket["guild_name"], ticket["channel_name"], channel_id, user_id, username))
+            return
+
+    # Case 2: Confirmation message sent to user
+    # e.g. "Ticket Created # ticket-885" or "you created a ticket # 10892-r0bbott"
+    ticket_name = extract_ticket_name_from_message(message)
+    if not ticket_name: return
+
+    for cid, ticket in list(pending_channels.items()):
+        if ticket["channel_name"].lower() == ticket_name and not ticket["sent"]:
+            ticket["sent"] = True
+            pending_channels.pop(cid)
+            user_id = str(client.user.id)
+            _, fetched_name, _ = await fetch_user_http(user_id)
+            username = fetched_name or extract_username_from_channel(ticket_name) or client.user.name
+            print(f"[ticket-confirm] {message.guild.name} → #{ticket_name} | {username} ({user_id})")
+            await send_to_telegram(build_message(ticket["guild_name"], ticket["channel_name"], cid, user_id, username))
+            return
 
 client.run(DISCORD_USER_TOKEN)
