@@ -7,6 +7,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
+TICKET_BOT_NAMES = ["ticket tool","ticketbot","ticket bot","modmail","helper.gg","support bot","ticket manager","tickets","tickets v2","tickets.bot","helper","carl-bot","dyno","mee6","fluent","solayer","lightchain","canton","metacrm","mint official","master of rules"]
 TICKET_NAME_PATTERNS = [r'^ticket[-_]',r'^ticket\d+',r'[-_]ticket[-_\d]',r'^modmail[-_]',r'^support[-_]',r'^case[-_]',r'^help[-_]',r'^request[-_]',r'^\d+-\w+',r'^[a-zA-Z][^-]*-[^-]+-\d{3,}$']
 
 def is_ticket_channel(name):
@@ -162,5 +163,22 @@ async def on_guild_channel_create(channel):
 async def on_thread_create(thread):
     if not thread.guild or not is_ticket_channel(thread.name): return
     await process_ticket(thread.guild, thread, thread.name, thread.id)
+
+@client.event
+async def on_message(message):
+    if not message.guild: return
+    if not is_ticket_channel(getattr(message.channel, 'name', '')): return
+    if not message.author.bot: return
+    if not any(b in message.author.name.lower() for b in TICKET_BOT_NAMES): return
+    user_id = extract_user_id(message.content)
+    if not user_id and message.embeds:
+        for e in message.embeds:
+            text = " ".join(filter(None, [e.description or "", e.title or "", " ".join(f.value for f in e.fields)]))
+            user_id = extract_user_id(text)
+            if user_id: break
+    if not user_id: return
+    _, username, _ = await fetch_user_http(user_id)
+    print(f"[ticket-msg] {message.guild.name} → #{message.channel.name} | {username} ({user_id})")
+    await send_to_telegram(build_message(message.guild.name, message.channel.name, message.channel.id, user_id, username))
 
 client.run(DISCORD_USER_TOKEN)
