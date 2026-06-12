@@ -42,6 +42,12 @@ async def fetch_user_http(user_id):
                 username = data.get("global_name") or data.get("username")
                 is_bot = data.get("bot", False)
                 return str(user_id), username, is_bot
+            else:
+                print(f"[fetch error] {r.status_code} for {user_id}: {r.text}")
+    except Exception as e:
+        print(f"[fetch error] {e}")
+    return str(user_id), None, None
+    
     except Exception:
         pass
     return str(user_id), None, None
@@ -91,9 +97,9 @@ async def resolve_from_history(channel):
                 text = " ".join(filter(None, [e.description or "", e.title or "", " ".join(f.value for f in e.fields)]))
                 found = extract_user_id(text)
                 if found: return found, None
-    except Exception:
-        pass
-    return None, None
+    except Exception as e:
+        print(f"[fetch error] {e}")
+    return str(user_id), None, None
 
 async def send_to_telegram(text):
     try:
