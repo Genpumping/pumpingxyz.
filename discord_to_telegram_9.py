@@ -29,7 +29,6 @@ def extract_username_from_channel(channel_name):
     return name
 
 async def fetch_user_http(user_id):
-    """Fetch user info from Discord API. Returns (id, username, is_bot)."""
     try:
         async with httpx.AsyncClient() as c:
             r = await c.get(
@@ -41,55 +40,41 @@ async def fetch_user_http(user_id):
                 data = r.json()
                 username = data.get("global_name") or data.get("username")
                 is_bot = data.get("bot", False)
-                print(f"  [http-fetch] {user_id} → {username} (bot={is_bot})")
                 return str(user_id), username, is_bot
-    except Exception as e:
-        print(f"  [http-fetch exception] {e}")
+    except Exception:
+        pass
     return str(user_id), None, None
 
 async def get_creator_from_overwrites(channel):
-    """
-    Check overwrites for the ticket creator.
-    Handles both discord.Member and discord.Object (unresolved members).
-    """
     member_ids = []
     try:
         for target, overwrite in channel.overwrites.items():
             tid = getattr(target, 'id', None)
             if not tid: continue
-
-            # Skip @everyone and known role IDs (roles have no 'bot' attribute as False)
             if isinstance(target, discord.Member):
                 if not target.bot and target.id != client.user.id:
-                    print(f"  [overwrite-member] {target.name} ({target.id})")
                     return str(target.id), target.name
             elif isinstance(target, discord.Role):
-                continue  # skip roles
+                continue
             else:
-                # discord.Object — unknown type, collect ID for HTTP lookup
                 if tid != client.user.id:
                     member_ids.append(tid)
-
-    except Exception as e:
-        print(f"  [overwrites error] {e}")
-
-    # Try fetching each Object ID to find the user
+    except Exception:
+        pass
     for uid in member_ids:
         uid_str, username, is_bot = await fetch_user_http(uid)
         if not is_bot and username:
             return uid_str, username
-
     return None, None
 
 def get_user_id_from_topic(channel):
     try:
         topic = getattr(channel, 'topic', None) or ''
         if topic:
-            print(f"  [topic] {topic[:100]}")
             found = extract_user_id(topic)
             if found: return found
-    except Exception as e:
-        print(f"  [topic error] {e}")
+    except Exception:
+        pass
     return None
 
 async def resolve_from_history(channel):
@@ -105,8 +90,8 @@ async def resolve_from_history(channel):
                 text = " ".join(filter(None, [e.description or "", e.title or "", " ".join(f.value for f in e.fields)]))
                 found = extract_user_id(text)
                 if found: return found, None
-    except Exception as ex:
-        print(f"  [history error] {ex}")
+    except Exception:
+        pass
     return None, None
 
 async def send_to_telegram(text):
@@ -117,9 +102,10 @@ async def send_to_telegram(text):
                 json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": False},
                 timeout=10,
             )
-            print("[Telegram] ✅ Sent" if r.status_code == 200 else f"[Telegram error] {r.status_code}: {r.text}")
+            if r.status_code != 200:
+                print(f"[Telegram error] {r.status_code}: {r.text}")
     except Exception as e:
-        print(f"  [telegram error] {e}")
+        print(f"[Telegram error] {e}")
 
 def build_message(guild_name, channel_name, channel_id, user_id=None, username=None):
     profile = f"https://discord.com/users/{user_id}" if user_id else "N/A"
@@ -136,51 +122,45 @@ async def process_ticket(guild, channel, channel_name, channel_id):
     try:
         user_id, username = None, None
 
-        # Method 1: permission overwrites (handles Member + Object types)
         user_id, username = await get_creator_from_overwrites(channel)
 
-        # Method 2: channel topic
         if not user_id:
             user_id = get_user_id_from_topic(channel)
 
-        # Method 3: channel history
         if not user_id:
             h_id, h_name = await resolve_from_history(channel)
             if h_id:
                 user_id = h_id
                 username = h_name
 
-        # Method 4: extract from channel name
         if not username:
             username = extract_username_from_channel(channel_name)
 
-        # Method 5: fetch username via HTTP if we have ID but no username
         if user_id and not username:
             _, username, _ = await fetch_user_http(user_id)
 
-        print(f"  → Final: {channel_name} | {username or 'Unknown'} ({user_id or '?'})")
+        status = f"{username or 'Unknown'} ({user_id or '?'})"
+        print(f"[ticket] {guild.name} → #{channel_name} | {status}")
         await send_to_telegram(build_message(guild.name, channel_name, channel_id, user_id, username))
 
     except Exception as e:
-        print(f"  [CRASH] {e}")
+        print(f"[ticket error] {guild.name} → #{channel_name} | {e}")
         await send_to_telegram(build_message(guild.name, channel_name, channel_id))
 
 client = discord.Client()
 
 @client.event
 async def on_ready():
-    print(f"✅ Logged in as {client.user} (id={client.user.id})\n   Watching ALL {len(client.guilds)} servers")
+    print(f"✅ Logged in as {client.user} | Watching {len(client.guilds)} servers")
 
 @client.event
 async def on_guild_channel_create(channel):
     if not hasattr(channel, 'guild') or not is_ticket_channel(channel.name): return
-    print(f"[new ticket channel] {channel.guild.name} → #{channel.name}")
     await process_ticket(channel.guild, channel, channel.name, channel.id)
 
 @client.event
 async def on_thread_create(thread):
     if not thread.guild or not is_ticket_channel(thread.name): return
-    print(f"[new ticket thread] {thread.guild.name} → {thread.name}")
     await process_ticket(thread.guild, thread, thread.name, thread.id)
 
 client.run(DISCORD_USER_TOKEN)
