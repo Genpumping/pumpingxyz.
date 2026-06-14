@@ -167,12 +167,12 @@ async def process_ticket(guild, channel, channel_name, channel_id):
         if user_id and not username:
             _, username, _ = await fetch_user_http(user_id)
 
-        if user_id:
-            if channel_id in pending_channels:
+      if user_id:
+            if channel_id in pending_channels and not pending_channels[channel_id]["sent"]:
                 pending_channels[channel_id]["sent"] = True
                 pending_channels.pop(channel_id)
-            print(f"[ticket] {guild.name} → #{channel_name} | {username or 'Unknown'} ({user_id})")
-            await send_to_telegram(build_message(guild.name, channel_name, channel_id, user_id, username))
+                print(f"[ticket] {guild.name} → #{channel_name} | {username or 'Unknown'} ({user_id})")
+                await send_to_telegram(build_message(guild.name, channel_name, channel_id, user_id, username))
         else:
             await asyncio.sleep(20)
             if channel_id in pending_channels and not pending_channels[channel_id]["sent"]:
