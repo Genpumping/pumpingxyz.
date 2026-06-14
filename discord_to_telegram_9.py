@@ -51,10 +51,10 @@ def extract_ticket_name_from_message(message):
 async def fetch_user_http(user_id):
     if str(user_id) == str(client.user.id):
         return str(user_id), client.user.global_name or client.user.name, False
-    try:
+  try:
         user = await client.fetch_user(int(user_id))
         if user:
-            return str(user_id), user.global_name or user.name, getattr(user, 'bot', False)
+            return str(user_id), user.name, getattr(user, 'bot', False)
     except Exception as e:
         print(f"[fetch error] {e}")
     return str(user_id), None, None
