@@ -50,8 +50,8 @@ def extract_ticket_name_from_message(message):
 
 async def fetch_user_http(user_id):
     if str(user_id) == str(client.user.id):
-        return str(user_id), client.user.global_name or client.user.name, False
-  try:
+        return str(user_id), client.user.name, False
+    try:
         user = await client.fetch_user(int(user_id))
         if user:
             return str(user_id), user.name, getattr(user, 'bot', False)
@@ -203,7 +203,6 @@ async def on_message(message):
 
     channel_id = message.channel.id
 
-    # Case 1: Message inside a ticket channel we're tracking
     if channel_id in pending_channels and not pending_channels[channel_id]["sent"]:
         user_id = extract_user_id(message.content)
         if not user_id and message.embeds:
@@ -222,7 +221,6 @@ async def on_message(message):
             await send_to_telegram(build_message(ticket["guild_name"], ticket["channel_name"], channel_id, user_id, username))
             return
 
-    # Case 2: Confirmation message sent to user
     ticket_name = extract_ticket_name_from_message(message)
     if not ticket_name: return
 
