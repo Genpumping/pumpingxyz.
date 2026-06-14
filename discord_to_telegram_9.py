@@ -49,20 +49,12 @@ def extract_ticket_name_from_message(message):
     return None
 
 async def fetch_user_http(user_id):
+    if str(user_id) == str(client.user.id):
+        return str(user_id), client.user.global_name or client.user.name, False
     try:
-        async with httpx.AsyncClient() as c:
-            r = await c.get(
-                f"https://discord.com/api/v10/users/{user_id}",
-                headers={"Authorization": DISCORD_USER_TOKEN},
-                timeout=10
-            )
-            if r.status_code == 200:
-                data = r.json()
-                username = data.get("global_name") or data.get("username")
-                is_bot = data.get("bot", False)
-                return str(user_id), username, is_bot
-            else:
-                print(f"[fetch error] {r.status_code} for {user_id}: {r.text}")
+        user = await client.fetch_user(int(user_id))
+        if user:
+            return str(user_id), user.global_name or user.name, getattr(user, 'bot', False)
     except Exception as e:
         print(f"[fetch error] {e}")
     return str(user_id), None, None
@@ -167,7 +159,7 @@ async def process_ticket(guild, channel, channel_name, channel_id):
         if user_id and not username:
             _, username, _ = await fetch_user_http(user_id)
 
-      if user_id:
+        if user_id:
             if channel_id in pending_channels and not pending_channels[channel_id]["sent"]:
                 pending_channels[channel_id]["sent"] = True
                 pending_channels.pop(channel_id)
@@ -231,7 +223,6 @@ async def on_message(message):
             return
 
     # Case 2: Confirmation message sent to user
-    # e.g. "Ticket Created # ticket-885" or "you created a ticket # 10892-r0bbott"
     ticket_name = extract_ticket_name_from_message(message)
     if not ticket_name: return
 
