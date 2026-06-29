@@ -196,6 +196,14 @@ async def on_thread_create(thread):
     await process_ticket(thread.guild, thread, thread.name, thread.id)
 
 @client.event
+async def on_raw_channel_create(payload):
+    print(f"[raw-channel] guild={payload.guild_id} channel={payload.channel_id}")
+
+@client.event
+async def on_raw_thread_create(payload):
+    print(f"[raw-thread] guild={payload.guild_id} thread={payload.thread_id}")
+
+@client.event
 async def on_message(message):
     if not message.guild: return
     if not message.author.bot: return
