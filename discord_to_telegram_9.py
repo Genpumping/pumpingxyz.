@@ -7,7 +7,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
-TICKET_BOT_NAMES = ["ticket tool","ticketbot","ticket bot","modmail","helper.gg","support bot","ticket manager","tickets","tickets v2","tickets.bot","helper","carl-bot","dyno","mee6","fluent","solayer","lightchain","canton","metacrm","mint official","master of rules"]
+TICKET_BOT_NAMES = ["ticket tool","ticketbot","ticket bot","modmail","helper.gg","support bot","ticket manager","tickets","tickets v2","tickets.bot","helper","carl-bot","dyno","mee6","fluent","solayer","lightchain","canton","metacrm","mint official","master of rules","extendio"]
 TICKET_NAME_PATTERNS = [r'^ticket[-_]',r'^ticket\d+',r'[-_]ticket[-_\d]',r'^modmail[-_]',r'^support[-_]',r'^case[-_]',r'^help[-_]',r'^request[-_]',r'^\d+-\w+',r'^[a-zA-Z][^-]*-[^-]+-\d{3,}$']
 
 pending_channels = {}
@@ -46,6 +46,10 @@ def extract_ticket_name_from_message(message):
         name = m.group(1).strip().lower()
         if is_ticket_channel(name):
             return name
+    # Pattern 3: Extendio "We have created a private thread"
+    if "we have created a private thread" in full_text.lower():
+        return "extendio-thread"
+
     return None
 
 async def fetch_user_http(user_id):
