@@ -1,20 +1,3 @@
-Here is a detailed breakdown of the major issues present in your script and the corrected code to fix them.
-
----
-
-### Key Issues Found & Fixed
-
-1. **`httpx.AsyncClient()` inside an async function:** Creating a new `httpx.AsyncClient()` for every single message sent can cause connection leaks and socket exhaustion. Reusing a persistent client session or using `httpx.post` directly (or a managed client) is much safer.
-2. **KeyError in `extract_ticket_name_from_message`:** `f.value` was accessed directly without verifying if `f.value` exists on `EmbedField` objects, which can fail depending on discord.py versions.
-3. **Pending dictionary race conditions:** Operations like popping `channel_id` directly without checking if it still exists can raise `KeyError` across overlapping async tasks.
-4. **Thread / Channel Overwrite logic:** `channel.overwrites` contains targets that can be `discord.Role` or `discord.Member`. `discord.Object` target types or missing attributes could cause `AttributeError` when inspecting `target.id`.
-5. **Self-Bot deprecation & User Tokens:** Note that `discord.py` (v2.x) intentionally dropped official support for user tokens (self-bots). Running standard `discord.Client()` with a user token will raise `discord.errors.LoginFailure` on newer library versions. To run user tokens with `discord.py-self` or `discord.py`, ensure you use a compatible library version or adapt the client run call.
-
----
-
-### Corrected Code
-
-```python
 import asyncio
 import os
 import re
