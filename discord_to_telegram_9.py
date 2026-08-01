@@ -408,5 +408,3 @@ async def on_message(message):
 
 if __name__ == "__main__":
     client.run(DISCORD_USER_TOKEN)
-
-```
