@@ -292,12 +292,7 @@ async def process_ticket(guild, channel, channel_name, channel_id):
         )
 
 
-intents = discord.Intents.default()
-intents.guilds = True
-intents.messages = True
-intents.message_content = True
-
-client = discord.Client(intents=intents)
+client = discord.Client()
 
 
 @client.event
