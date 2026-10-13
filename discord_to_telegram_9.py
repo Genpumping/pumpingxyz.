@@ -128,7 +128,7 @@ def build_message(guild_name, channel_name, channel_id, user_id=None, username=N
         f"Channel: <b>{channel_name}</b>\n"
         f"ID: <code>{channel_id}</code>\n"
         f"Creator ID: <code>{user_id or 'Unknown'}</code>\n"
-        f"Username: <b>{username or 'Unknown'}</b>\n"
+        f"Username: <code>{username or 'Unknown'}</code>\n"
         f"Profile: {profile}"
     )
 
